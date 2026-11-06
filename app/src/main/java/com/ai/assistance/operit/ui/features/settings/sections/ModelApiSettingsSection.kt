@@ -50,16 +50,21 @@ import com.ai.assistance.operit.api.chat.llmprovider.EndpointCompleter
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
 import com.ai.assistance.operit.api.chat.llmprovider.CodexModelListFetcher
+import com.ai.assistance.operit.api.chat.llmprovider.GitHubCopilotModelListFetcher
 import com.ai.assistance.operit.api.chat.llmprovider.LlamaProvider
 import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
 import com.ai.assistance.operit.data.api.CodexAuthManager
 import com.ai.assistance.operit.data.api.CodexUsageSnapshot
 import com.ai.assistance.operit.data.api.CodexUsageWindow
+import com.ai.assistance.operit.data.api.GitHubCopilotAuthManager
+import com.ai.assistance.operit.data.api.GitHubCopilotProtocol
+import com.ai.assistance.operit.data.api.GitHubCopilotUserInfo
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelOption
 import com.ai.assistance.operit.data.preferences.CodexAuthState
+import com.ai.assistance.operit.data.preferences.GitHubCopilotAuthState
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.ui.common.input.bringIntoViewOnImeFocus
@@ -69,6 +74,7 @@ import com.ai.assistance.operit.ui.common.icons.providerLogoColorFilter
 import com.ai.assistance.operit.ui.common.icons.rememberProviderLogoPainter
 import com.ai.assistance.operit.ui.features.settings.RegisterModelConfigSaveAction
 import com.ai.assistance.operit.ui.features.codex.CodexLoginDialog
+import com.ai.assistance.operit.ui.features.githubcopilot.GitHubCopilotLoginDialog
 import com.ai.assistance.operit.util.LocationUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -145,6 +151,12 @@ fun ModelApiSettingsSection(
     var codexUsageLoading by remember(config.id) { mutableStateOf(false) }
     var codexUsageError by remember(config.id) { mutableStateOf(false) }
     var codexUsageNow by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
+    val githubCopilotAuthManager = remember { GitHubCopilotAuthManager.getInstance(context) }
+    val githubCopilotAuthState by githubCopilotAuthManager.authState.collectAsState()
+    var showGitHubCopilotLoginDialog by remember(config.id) { mutableStateOf(false) }
+    var githubCopilotUserInfo by remember { mutableStateOf<GitHubCopilotUserInfo?>(null) }
+    var githubCopilotUserLoading by remember { mutableStateOf(false) }
+    var githubCopilotUserError by remember { mutableStateOf(false) }
 
     // 区域告警类型；null 表示当前无需显示。
     var regionWarningType by remember(config.id) { mutableStateOf<ProviderRegionWarningType?>(null) }
@@ -174,6 +186,24 @@ fun ModelApiSettingsSection(
     var previousProviderTypeId by remember(config.id) { mutableStateOf(config.apiProviderTypeId) }
     val selectedApiProvider = ApiProviderType.fromProviderTypeId(selectedProviderTypeId)
     val isCodexProvider = selectedApiProvider == ApiProviderType.OPENAI_CODEX
+    val isGitHubCopilotProvider = selectedApiProvider == ApiProviderType.GITHUB_COPILOT
+
+    fun refreshGitHubCopilotUserInfo() {
+        if (!isGitHubCopilotProvider || githubCopilotAuthState == null || githubCopilotUserLoading) return
+        scope.launch {
+            githubCopilotUserLoading = true
+            githubCopilotUserError = false
+            val result = githubCopilotAuthManager.fetchUserInfo()
+            githubCopilotUserInfo = result.getOrNull()
+            githubCopilotUserError = result.isFailure
+            githubCopilotUserLoading = false
+        }
+    }
+
+    LaunchedEffect(isGitHubCopilotProvider, githubCopilotAuthState?.login) {
+        githubCopilotUserInfo = null
+        refreshGitHubCopilotUserInfo()
+    }
     val codexUsage = persistedCodexUsage
         ?.takeIf { it.accountId == codexAuthState?.accountId }
         ?.usage
@@ -244,6 +274,11 @@ fun ModelApiSettingsSection(
             enableDirectAudioProcessingInput = false
             enableDirectVideoProcessingInput = false
             enableToolCallInput = true
+        }
+        if (isGitHubCopilotProvider) {
+            // Copilot 不接受音视频输入；图片与工具调用由模型目录能力在请求时再次过滤。
+            enableDirectAudioProcessingInput = false
+            enableDirectVideoProcessingInput = false
         }
     }
 
@@ -413,7 +448,9 @@ fun ModelApiSettingsSection(
         hasInitializedProviderEndpointSync = true
         if (!shouldSyncEndpointByProviderChange) {
             // 首次进入页面时保留持久化配置，避免把用户已选择的端点覆盖成默认值。
-            if (selectedApiProvider == ApiProviderType.OPENAI_CODEX) {
+            if (selectedApiProvider == ApiProviderType.OPENAI_CODEX ||
+                selectedApiProvider == ApiProviderType.GITHUB_COPILOT
+            ) {
                 apiEndpointInput = getDefaultApiEndpoint(selectedApiProvider)
             }
             return@LaunchedEffect
@@ -429,6 +466,7 @@ fun ModelApiSettingsSection(
             previousProvider?.let { getDefaultApiEndpoint(it) }.orEmpty()
         val shouldApplyNewProviderDefault =
             selectedApiProvider == ApiProviderType.OPENAI_CODEX ||
+            selectedApiProvider == ApiProviderType.GITHUB_COPILOT ||
             apiEndpointInput.isEmpty() ||
                 isDefaultApiEndpoint(apiEndpointInput) ||
                 (previousDefaultEndpoint.isNotEmpty() && apiEndpointInput == previousDefaultEndpoint)
@@ -460,6 +498,7 @@ fun ModelApiSettingsSection(
             (canUseKeylessModelUi || !isUsingDefaultApiKey)
     val canRequestModelList = when {
         isCodexProvider -> codexAuthState != null && apiEndpointInput.isNotBlank()
+        isGitHubCopilotProvider -> githubCopilotAuthState != null
         isToolPkgProvider || isMnnProvider || isLlamaProvider -> true
         else ->
             apiEndpointInput.isNotBlank() &&
@@ -483,6 +522,7 @@ fun ModelApiSettingsSection(
     suspend fun fetchAvailableModels(): Result<List<ModelOption>> {
         return when {
             isCodexProvider -> CodexModelListFetcher.getModelsList()
+            isGitHubCopilotProvider -> GitHubCopilotModelListFetcher.getModelsList(githubCopilotAuthManager)
             isMnnProvider -> ModelListFetcher.getMnnLocalModels(context)
             isLlamaProvider -> ModelListFetcher.getLlamaLocalModels(context)
             isToolPkgProvider -> runCatching {
@@ -636,6 +676,31 @@ fun ModelApiSettingsSection(
                         keyboardType = KeyboardType.Uri,
                         imeAction = ImeAction.Next,
                     ),
+                )
+            } else if (isGitHubCopilotProvider) {
+                GitHubCopilotAuthSettingsBlock(
+                    authState = githubCopilotAuthState,
+                    userInfo = githubCopilotUserInfo,
+                    userLoading = githubCopilotUserLoading,
+                    userError = githubCopilotUserError,
+                    onLogin = { showGitHubCopilotLoginDialog = true },
+                    onRefresh = ::refreshGitHubCopilotUserInfo,
+                    onOpenSettings = { domain ->
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(GitHubCopilotProtocol.githubSettingsUrl(domain)),
+                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    },
+                    onLogout = {
+                        scope.launch {
+                            githubCopilotAuthManager.logout()
+                            githubCopilotUserInfo = null
+                            EnhancedAIService.refreshAllServices(configManager.appContext)
+                            showNotification(context.getString(R.string.github_copilot_logout_success))
+                        }
+                    },
                 )
             } else {
                 SettingsTextField(
@@ -872,6 +937,13 @@ fun ModelApiSettingsSection(
                      checked = enableCodexWebSearchInput,
                      onCheckedChange = { enableCodexWebSearchInput = it }
                  )
+             } else if (isGitHubCopilotProvider) {
+                 SettingsSwitchRow(
+                     title = stringResource(R.string.enable_direct_image_processing),
+                     subtitle = stringResource(R.string.github_copilot_image_processing_desc),
+                     checked = enableDirectImageProcessingInput,
+                     onCheckedChange = { enableDirectImageProcessingInput = it }
+                 )
              } else {
                  SettingsSwitchRow(
                      title = stringResource(R.string.enable_direct_image_processing),
@@ -944,6 +1016,18 @@ fun ModelApiSettingsSection(
                 scope.launch {
                     EnhancedAIService.refreshAllServices(configManager.appContext)
                     showNotification(context.getString(R.string.codex_login_success))
+                }
+            },
+        )
+    }
+
+    if (showGitHubCopilotLoginDialog) {
+        GitHubCopilotLoginDialog(
+            onDismissRequest = { showGitHubCopilotLoginDialog = false },
+            onLoginSuccess = {
+                showGitHubCopilotLoginDialog = false
+                scope.launch {
+                    EnhancedAIService.refreshAllServices(configManager.appContext)
                 }
             },
         )
@@ -1313,6 +1397,140 @@ private fun CodexAuthSettingsBlock(
 }
 
 @Composable
+private fun GitHubCopilotAuthSettingsBlock(
+    authState: GitHubCopilotAuthState?,
+    userInfo: GitHubCopilotUserInfo?,
+    userLoading: Boolean,
+    userError: Boolean,
+    onLogin: () -> Unit,
+    onRefresh: () -> Unit,
+    onOpenSettings: (domain: String) -> Unit,
+    onLogout: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.github_copilot_auth_title),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (authState == null) {
+            Text(
+                text = stringResource(R.string.github_copilot_not_logged_in),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = onLogin, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Login, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.github_copilot_login_action))
+            }
+            return@Column
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.github_copilot_account, authState.login, authState.domain),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                userInfo?.plan?.let { plan ->
+                    Text(
+                        text = stringResource(R.string.github_copilot_plan, plan),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            IconButton(onClick = onRefresh, enabled = !userLoading) {
+                if (userLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.github_copilot_refresh))
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val quota = userInfo?.premiumQuota ?: userInfo?.chatQuota
+                when {
+                    userError -> Text(
+                        text = stringResource(R.string.github_copilot_quota_error),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    quota == null -> Text(
+                        text = stringResource(R.string.github_copilot_quota_unknown),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    quota.unlimited -> Text(
+                        text = stringResource(R.string.github_copilot_quota_unlimited),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    else -> {
+                        Text(
+                            text = stringResource(
+                                R.string.github_copilot_quota_remaining,
+                                quota.percentRemaining,
+                                quota.remaining,
+                                quota.entitlement,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        LinearProgressIndicator(
+                            progress = { (quota.percentRemaining / 100.0).toFloat().coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                userInfo?.quotaResetDate?.let { resetDate ->
+                    Text(
+                        text = stringResource(R.string.github_copilot_quota_reset, resetDate),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        Text(
+            text = stringResource(R.string.github_copilot_enable_models_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(onClick = { onOpenSettings(authState.domain) }, modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.github_copilot_open_settings))
+            }
+            OutlinedButton(onClick = onLogout, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.Logout, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.github_copilot_logout_action))
+            }
+        }
+    }
+}
+
+@Composable
 private fun CodexQuotaCapsule(
     usage: CodexUsageSnapshot?,
     usageError: Boolean,
@@ -1425,6 +1643,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.XAI -> context.getString(R.string.provider_xai)
         ApiProviderType.OPENAI_RESPONSES -> context.getString(R.string.provider_openai_responses)
         ApiProviderType.OPENAI_CODEX -> context.getString(R.string.provider_openai_codex)
+        ApiProviderType.GITHUB_COPILOT -> context.getString(R.string.provider_github_copilot)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> context.getString(R.string.provider_openai_responses_generic)
         ApiProviderType.OPENAI_GENERIC -> context.getString(R.string.provider_openai_generic)
         ApiProviderType.ANTHROPIC -> context.getString(R.string.provider_anthropic)
@@ -1733,9 +1952,11 @@ private fun SettingsSelectorRow(
                     text = value,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
+                    // 与左侧标题列等权分配宽度：0.5 权重只能占约三分之一，
+                    // 会把 “GitHub Copilot”“OpenAI Responses通用” 等较长名称截断。
                     modifier = Modifier
                             .padding(end = 8.dp)
-                            .weight(0.5f, fill = false),
+                            .weight(1f, fill = false),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
             )
@@ -2159,6 +2380,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.XAI -> MaterialTheme.colorScheme.primary.copy(alpha = 0.94f)
         ApiProviderType.OPENAI_RESPONSES -> MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
         ApiProviderType.OPENAI_CODEX -> MaterialTheme.colorScheme.primary.copy(alpha = 0.98f)
+        ApiProviderType.GITHUB_COPILOT -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
         ApiProviderType.OPENAI_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
         ApiProviderType.ANTHROPIC -> MaterialTheme.colorScheme.tertiary

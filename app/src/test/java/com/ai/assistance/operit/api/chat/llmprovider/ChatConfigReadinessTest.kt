@@ -58,6 +58,19 @@ class ChatConfigReadinessTest {
     }
 
     @Test
+    fun githubCopilotReadinessDependsOnLoginNotEndpointOrKey() {
+        val config = remoteConfig(ApiProviderType.GITHUB_COPILOT, apiKey = "", endpoint = "")
+        assertIssue(ChatConfigReadinessIssue.GITHUB_COPILOT_LOGIN_REQUIRED, config)
+        val result = ChatConfigReadiness.evaluate(
+            config = config,
+            modelIndex = 0,
+            registeredPluginProviderIds = emptySet(),
+            githubCopilotAuthenticated = true,
+        )
+        assertTrue(result.isReady)
+    }
+
+    @Test
     fun genericProviderMayUseCustomHeaderAuthentication() {
         assertReady(remoteConfig(ApiProviderType.OPENAI_GENERIC, apiKey = ""))
     }

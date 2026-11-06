@@ -399,6 +399,16 @@ object AIServiceFactory {
                     thinkingOptionId = config.thinkingOptionId,
                 )
 
+            ApiProviderType.GITHUB_COPILOT ->
+                GitHubCopilotProvider.create(
+                    config = config,
+                    context = context,
+                    client = httpClient,
+                    customHeaders = customHeaders,
+                    enableDirectImageProcessing = supportsVision,
+                    enableToolCall = enableToolCall,
+                )
+
             // Claude格式，支持Anthropic Claude系列
             ApiProviderType.ANTHROPIC,
             ApiProviderType.ANTHROPIC_GENERIC ->
