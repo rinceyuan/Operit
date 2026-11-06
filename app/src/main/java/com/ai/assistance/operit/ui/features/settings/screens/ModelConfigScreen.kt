@@ -173,6 +173,10 @@ fun ModelConfigScreen(
     val functionalConfigManager = remember { FunctionalConfigManager(context) }
     val codexAuthManager = remember { CodexAuthManager.getInstance(context) }
     val codexAuthState by codexAuthManager.authState.collectAsState()
+    val githubCopilotAuthManager = remember {
+        com.ai.assistance.operit.data.api.GitHubCopilotAuthManager.getInstance(context)
+    }
+    val githubCopilotAuthState by githubCopilotAuthManager.authState.collectAsState()
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val saveCoordinator = rememberModelConfigSaveCoordinator()
@@ -298,6 +302,7 @@ fun ModelConfigScreen(
                         modelIndex = targetModelIndex,
                         registeredPluginProviderIds = registeredPluginProviderIds,
                         codexAuthenticated = codexAuthState != null,
+                        githubCopilotAuthenticated = githubCopilotAuthState != null,
                     )
                 if (!readiness.isReady) {
                     val messageResId =
@@ -312,6 +317,8 @@ fun ModelConfigScreen(
                                 R.string.onboarding_config_model_missing
                             ChatConfigReadinessIssue.CODEX_LOGIN_REQUIRED ->
                                 R.string.onboarding_config_codex_login_required
+                            ChatConfigReadinessIssue.GITHUB_COPILOT_LOGIN_REQUIRED ->
+                                R.string.onboarding_config_github_copilot_login_required
                             ChatConfigReadinessIssue.API_KEY_MISSING ->
                                 R.string.onboarding_config_api_key_missing
                             ChatConfigReadinessIssue.API_KEY_INVALID ->

@@ -3662,6 +3662,7 @@ type ModelConfigProviderType =
   | "OPENROUTER"
   | "FOUR_ROUTER"
   | "NOUS_PORTAL"
+  | "GITHUB_COPILOT"
   | "INFINIAI"
   | "ALIPAY_BAILING"
   | "DOUBAO"

@@ -39,6 +39,11 @@ object ApiProviderConfigs {
             defaultApiEndpoint = "https://chatgpt.com/backend-api/codex/responses",
             requiresApiKey = false,
         ),
+        // 端点由登录后 Copilot token 的 endpoints.api 决定，模型由 Copilot 模型目录决定。
+        ProviderApiConfig(
+            providerType = ApiProviderType.GITHUB_COPILOT,
+            requiresApiKey = false,
+        ),
         ProviderApiConfig(
             providerType = ApiProviderType.OPENAI_RESPONSES_GENERIC,
             defaultModelName = "",

@@ -14,6 +14,7 @@ enum class ChatConfigReadinessIssue {
     ENDPOINT_INVALID,
     MODEL_MISSING,
     CODEX_LOGIN_REQUIRED,
+    GITHUB_COPILOT_LOGIN_REQUIRED,
     API_KEY_MISSING,
     API_KEY_INVALID
 }
@@ -28,6 +29,7 @@ object ChatConfigReadiness {
         setOf(
             ApiProviderType.OPENAI_RESPONSES_GENERIC,
             ApiProviderType.OPENAI_CODEX,
+            ApiProviderType.GITHUB_COPILOT,
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.ANTHROPIC_GENERIC,
             ApiProviderType.GEMINI_GENERIC,
@@ -39,6 +41,7 @@ object ChatConfigReadiness {
         modelIndex: Int,
         registeredPluginProviderIds: Set<String>,
         codexAuthenticated: Boolean = false,
+        githubCopilotAuthenticated: Boolean = false,
     ): ChatConfigReadinessResult {
         val providerTypeId = config.apiProviderTypeId.trim()
         if (providerTypeId.isEmpty()) {
@@ -60,6 +63,15 @@ object ChatConfigReadiness {
         val validModelIndex = getValidModelIndex(config.modelName, modelIndex)
         if (getModelByIndex(config.modelName, validModelIndex).isBlank()) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.MODEL_MISSING)
+        }
+
+        if (providerType == ApiProviderType.GITHUB_COPILOT) {
+            // Copilot 配置不保存端点，真实基址来自登录状态，因此在端点校验之前返回。
+            return if (githubCopilotAuthenticated) {
+                ChatConfigReadinessResult()
+            } else {
+                ChatConfigReadinessResult(ChatConfigReadinessIssue.GITHUB_COPILOT_LOGIN_REQUIRED)
+            }
         }
 
         if (providerType == ApiProviderType.MNN || providerType == ApiProviderType.LLAMA_CPP) {

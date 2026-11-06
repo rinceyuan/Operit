@@ -56,8 +56,10 @@ fun AdvancedSettingsSection(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // 账号登录类提供商不使用 API Key，隐藏密钥池设置。
     val isCodexProvider =
-        ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) == ApiProviderType.OPENAI_CODEX
+        ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) in
+            setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GITHUB_COPILOT)
 
     var useApiKeyPool by remember(config.id) { mutableStateOf(config.useMultipleApiKeys) }
     var apiKeyPool by remember(config.id) { mutableStateOf(config.apiKeyPool) }
